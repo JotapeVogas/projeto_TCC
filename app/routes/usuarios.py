@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query, Body, Path
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
-from app.redis.common import manipular_excecoes
+from utils.common import manipular_excecoes
 from app.database.connection import get_session
 from app.models.usuarios import UsuarioDB
 from app.schemas.usuarios import ListUsuarios, Setusuario, Editusuario
@@ -69,8 +69,10 @@ class UsuariosRouter(APIRouter):
         - JSONResponse contendo o mapeamento de ListUsuarios.
         """
         try:
+            #gerar chave
             model_list_usuarios = ListUsuarios.model_construct()
-            
+            # if buscar_cache(gerar chave):
+            #     return JSONResponse(buscar_cache(gerar chave), status_code=200)
             # Busca otimizada com filtros dinâmicos
             db_usuarios = banco.query(UsuarioDB).filter(
                 UsuarioDB.nome.ilike(f'%{nome.strip()}%') if nome else True,
@@ -84,6 +86,7 @@ class UsuariosRouter(APIRouter):
                     for usuario in db_usuarios
                 ]
 
+            #SALVAR_CACHE(gerar chave, model_list_usuarios.model_dump(), 300)
             # Retorno limpo sem loads(dump_json)
             return JSONResponse(model_list_usuarios.model_dump(), status_code=200)
         except HTTPException: 
@@ -92,8 +95,9 @@ class UsuariosRouter(APIRouter):
             banco.rollback()
             manipular_excecoes(E)
 
-    def postar_usuario(self, usuario_info: Setusuario = Body(...), 
-                    banco: Session = Depends(get_session)
+    def postar_usuario(self, 
+                       usuario_info: Setusuario = Body(...), 
+                       banco: Session = Depends(get_session)
     ):
         """
         Cria e cadastra um novo usuário no sistema.
@@ -117,12 +121,17 @@ class UsuariosRouter(APIRouter):
             dados_para_db = usuario_info.model_dump(exclude={"id_usuario"})
             db_usuario = UsuarioDB(**dados_para_db)
             
-            banco.add(db_usuario)
-            banco.commit()
-            banco.refresh(db_usuario)
 
+
+            banco.add(db_usuario)
+            banco.flush()  # Garante que o ID seja gerado para o novo usuário
+            banco.refresh(db_usuario)
+            
+            if db_usuario.id_usuario:
+                usuario_info.id_usuario = db_usuario.id_usuario
+                banco.commit()
+            
             # 3. Retorno
-            usuario_info.id_usuario = db_usuario.id_usuario
             return JSONResponse(usuario_info.model_dump(), status_code=status.HTTP_201_CREATED)
 
         except HTTPException: 
