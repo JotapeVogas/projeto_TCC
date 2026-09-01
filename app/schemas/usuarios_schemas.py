@@ -21,4 +21,3 @@ class Setusuario(BaseModel):
 
 class Editusuario(Setusuario):
     id_usuario: int = Field()
-

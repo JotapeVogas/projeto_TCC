@@ -2,14 +2,10 @@
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Body, Path
 from fastapi.responses import JSONResponse
-from sqlalchemy.orm import Session
 
-from app.repository.usuarios_repository import UsuarioRepository, desativar_usuario_no_banco
+from units_of_work.unit_of_work_usuario import UnitOfWork, get_uow
+from schemas.usuarios_schemas import ListUsuarios, Setusuario, Editusuario
 from utils.common import manipular_excecoes
-from app.database.connection import get_session
-from app.models.usuarios_models import UsuarioDB
-from app.schemas.usuarios_schemas import ListUsuarios, Setusuario, Editusuario
-
 class UsuariosRouter(APIRouter):
     def __init__(self):
         super().__init__(prefix="/usuarios")
@@ -49,16 +45,14 @@ class UsuariosRouter(APIRouter):
                            summary='Desativar usuário'
         )
 
-    def buscar_usuarios(
-        self,
-        banco: Session = Depends(get_session),
+    def buscar_usuarios(self,
+        uow: UnitOfWork = Depends(get_uow),
         id: Optional[int] = Query(None, description='Filtrar por ID'),
         ativo: Literal['-1', '0', '1'] = Query('-1', description='-1: todos | 0: inativos | 1: ativos')
     ):
         """Lista usuários do sistema com base em filtros opcionais."""
         try:
-            repo = UsuarioRepository(banco)
-            db_usuarios = repo.buscar_usuarios(id, ativo)
+            db_usuarios = uow.usuarios.buscar_usuarios(id, ativo)
             
             model_list_usuarios = ListUsuarios.model_construct()
             if db_usuarios:
@@ -71,27 +65,21 @@ class UsuariosRouter(APIRouter):
         except Exception as E:
             manipular_excecoes(E)
 
-    def postar_usuario(
-        self, 
+    def postar_usuario(self, 
         usuario_info: Setusuario = Body(...), 
-        banco: Session = Depends(get_session)
+        uow: UnitOfWork = Depends(get_uow)
     ):
         """Cria e cadastra um novo usuário no sistema."""
         try:
-            repo = UsuarioRepository(banco)
-            
-            # 1. Verificação
-            if repo.verificar_nome_existente(usuario_info.nome):
+            if uow.usuarios.verificar_nome_existente(usuario_info.nome):
                 raise HTTPException(
                     status.HTTP_400_BAD_REQUEST, 
                     'Já existe um usuário cadastrado com esse nome!'
                 )
 
-            # 2. Inserção
             dados_para_db = usuario_info.model_dump(exclude={"id_usuario"})
-            novo_usuario = repo.criar_usuario(dados_para_db)
+            novo_usuario = uow.usuarios.criar_usuario(dados_para_db)
             
-            # 3. Retorno
             usuario_info.id_usuario = novo_usuario.id_usuario
             return JSONResponse(usuario_info.model_dump(), status_code=status.HTTP_201_CREATED)
 
@@ -100,17 +88,15 @@ class UsuariosRouter(APIRouter):
         except Exception as E:
             manipular_excecoes(E)
 
-    def atualizar_usuario(
-        self, 
+    def atualizar_usuario(self, 
         usuario_info: Editusuario = Body(...), 
-        banco: Session = Depends(get_session)
+        uow: UnitOfWork = Depends(get_uow)
     ):
         """Atualiza campos específicos das informações de um usuário existente."""
         try:
-            repo = UsuarioRepository(banco)
             dados_atualizados = usuario_info.model_dump(exclude_unset=True, exclude={'id_usuario'})
             
-            sucesso = repo.atualizar_usuario(usuario_info.id_usuario, dados_atualizados)
+            sucesso = uow.usuarios.atualizar_usuario(usuario_info.id_usuario, dados_atualizados)
             
             if not sucesso:
                 raise HTTPException(status.HTTP_404_NOT_FOUND, 'Usuário não encontrado!')
@@ -122,15 +108,13 @@ class UsuariosRouter(APIRouter):
         except Exception as E:
             manipular_excecoes(E)
 
-    def ativar_usuario(
-        self, 
+    def ativar_usuario(self, 
         id_usuario: int = Path(...), 
-        banco: Session = Depends(get_session)
+        uow: UnitOfWork = Depends(get_uow)
     ):
         """Reativa um usuário previamente desativado."""
         try:
-            repo = UsuarioRepository(banco)
-            sucesso = repo.alterar_status_usuario(id_usuario, status_ativo=1)
+            sucesso = uow.usuarios.alterar_status_usuario(id_usuario, status_ativo=1)
             
             if not sucesso:
                 raise HTTPException(status.HTTP_404_NOT_FOUND, 'Usuário não encontrado!')
@@ -141,8 +125,9 @@ class UsuariosRouter(APIRouter):
         except Exception as E:
             manipular_excecoes(E)
 
-    def deletar_usuario(self, id_usuario: int = Path(...), 
-                       banco: Session = Depends(get_session)
+    def deletar_usuario(self,
+        id_usuario: int = Path(...), 
+        uow: UnitOfWork = Depends(get_uow)
     ):
         """
         Realiza a desativação de um usuário (Soft Delete) definindo seu status como inativo.
@@ -158,7 +143,7 @@ class UsuariosRouter(APIRouter):
         - Um JSONResponse confirmando a desativação.
         """
         try:
-            sucesso = desativar_usuario_no_banco(id_usuario, banco)
+            sucesso = uow.usuarios.desativar_usuario_no_banco(id_usuario, self.banco)
             
             if not sucesso:
                 raise HTTPException(

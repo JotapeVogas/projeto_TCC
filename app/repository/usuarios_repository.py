@@ -1,6 +1,6 @@
 from sqlalchemy.orm import Session
 
-from app.models.usuarios_models import UsuarioDB
+from models.usuarios_models import UsuarioDB
 
 from typing import Optional, List, Dict, Any
 from sqlalchemy.orm import Session
@@ -78,22 +78,22 @@ class UsuarioRepository:
             self.banco.rollback()
             raise e
 
-def desativar_usuario_no_banco(id_usuario: int, banco: Session) -> bool:
-    """
-    Executa o soft delete do usuário no banco de dados.
-    Retorna True se o usuário foi encontrado e desativado, e False caso contrário.
-    """
-    try:
-        result = banco.query(UsuarioDB).filter(
-            UsuarioDB.id_usuario == id_usuario
-        ).update({'ativo': 0})
-        
-        if not result:
-            return False
+    def desativar_usuario_no_banco(id_usuario: int, banco: Session) -> bool:
+        """
+        Executa o soft delete do usuário no banco de dados.
+        Retorna True se o usuário foi encontrado e desativado, e False caso contrário.
+        """
+        try:
+            result = banco.query(UsuarioDB).filter(
+                UsuarioDB.id_usuario == id_usuario
+            ).update({'ativo': 0})
             
-        banco.commit()
-        return True
-        
-    except Exception as e:
-        banco.rollback()
-        raise e
+            if not result:
+                return False
+                
+            banco.commit()
+            return True
+            
+        except Exception as e:
+            banco.rollback()
+            raise e
