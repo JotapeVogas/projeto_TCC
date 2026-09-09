@@ -3,9 +3,10 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Body, Path
 from fastapi.responses import JSONResponse
 
-from units_of_work.unit_of_work_usuario import UnitOfWork, get_uow
-from schemas.usuarios_schemas import ListUsuarios, Setusuario, Editusuario
-from utils.common import manipular_excecoes
+from app.redis_app.cache import buscar_cache, gerar_chave_cache, salvar_cache, limpar_cache_pattern, limpar_cache
+from app.units_of_work.unit_of_work_usuario import UnitOfWork, get_uow
+from app.schemas.usuarios_schemas import ListUsuarios, Setusuario, Editusuario
+from app.utils.common import manipular_excecoes
 class UsuariosRouter(APIRouter):
     def __init__(self):
         super().__init__(prefix="/usuarios")
@@ -14,7 +15,7 @@ class UsuariosRouter(APIRouter):
                            self.buscar_usuarios, 
                            methods=['GET'], 
                            response_model=ListUsuarios, 
-                           summary='Listar usuários'
+                           summary='Buscar usuários'
         )
 
         self.add_api_route('', 
@@ -50,8 +51,27 @@ class UsuariosRouter(APIRouter):
         id: Optional[int] = Query(None, description='Filtrar por ID'),
         ativo: Literal['-1', '0', '1'] = Query('-1', description='-1: todos | 0: inativos | 1: ativos')
     ):
-        """Lista usuários do sistema com base em filtros opcionais."""
+        """
+        Lista usuários do sistema com base em filtros opcionais, priorizando a busca no cache.
+        
+        Parâmetros:
+        - uow: Unidade de trabalho (UnitOfWork) injetada como dependência para acesso ao banco.
+        - id: Identificador (ID) opcional do usuário para filtro.
+        - ativo: Filtro de status do usuário ('-1' para todos, '0' inativos, '1' ativos).
+        
+        Lança:
+        - Exception genérica repassada ao manipulador de exceções em caso de falhas inesperadas.
+        
+        Retorna:
+        - Um JSONResponse com os dados dos usuários empacotados com a chave de origem ("Redis" ou "Postgres").
+        """
         try:
+            chave_cache = gerar_chave_cache("usuarios:lista", id=id, ativo=ativo)
+            
+            cache = buscar_cache(chave_cache)
+            
+            if cache:
+                return JSONResponse({"Redis": cache}, status_code=status.HTTP_200_OK)
             db_usuarios = uow.usuarios.buscar_usuarios(id, ativo)
             
             model_list_usuarios = ListUsuarios.model_construct()
@@ -61,7 +81,11 @@ class UsuariosRouter(APIRouter):
                     for usuario in db_usuarios
                 ]
 
-            return JSONResponse(model_list_usuarios.model_dump(), status_code=200)
+            dados_resposta = model_list_usuarios.model_dump()
+            
+            salvar_cache(chave_cache, dados_resposta, ttl=1800)
+
+            return JSONResponse({"Postgres": dados_resposta}, status_code=status.HTTP_200_OK)
         except Exception as E:
             manipular_excecoes(E)
 
@@ -69,7 +93,20 @@ class UsuariosRouter(APIRouter):
         usuario_info: Setusuario = Body(...), 
         uow: UnitOfWork = Depends(get_uow)
     ):
-        """Cria e cadastra um novo usuário no sistema."""
+        """
+        Cria e cadastra um novo usuário no sistema, invalidando o cache das listagens.
+        
+        Parâmetros:
+        - usuario_info: Objeto recebido no corpo da requisição (Body) contendo os dados de criação.
+        - uow: Unidade de trabalho (UnitOfWork) injetada como dependência para acesso ao banco.
+        
+        Lança:
+        - HTTPException 400 caso já exista um usuário cadastrado com o mesmo nome informado.
+        - Exception genérica repassada ao manipulador de exceções.
+        
+        Retorna:
+        - Um JSONResponse confirmando a criação com os dados do usuário.
+        """
         try:
             if uow.usuarios.verificar_nome_existente(usuario_info.nome):
                 raise HTTPException(
@@ -81,6 +118,9 @@ class UsuariosRouter(APIRouter):
             novo_usuario = uow.usuarios.criar_usuario(dados_para_db)
             
             usuario_info.id_usuario = novo_usuario.id_usuario
+
+            limpar_cache_pattern("usuarios:*")
+            
             return JSONResponse(usuario_info.model_dump(), status_code=status.HTTP_201_CREATED)
 
         except HTTPException: 
@@ -92,7 +132,20 @@ class UsuariosRouter(APIRouter):
         usuario_info: Editusuario = Body(...), 
         uow: UnitOfWork = Depends(get_uow)
     ):
-        """Atualiza campos específicos das informações de um usuário existente."""
+        """
+        Atualiza campos específicos das informações de um usuário existente e limpa o cache.
+        
+        Parâmetros:
+        - usuario_info: Objeto contendo os dados a serem atualizados e o ID do usuário (Body).
+        - uow: Unidade de trabalho (UnitOfWork) injetada como dependência para acesso ao banco.
+        
+        Lança:
+        - HTTPException 404 caso o usuário não seja encontrado para atualização.
+        - Exception genérica repassada ao manipulador de exceções.
+        
+        Retorna:
+        - Um JSONResponse confirmando o sucesso da atualização.
+        """
         try:
             dados_atualizados = usuario_info.model_dump(exclude_unset=True, exclude={'id_usuario'})
             
@@ -100,6 +153,8 @@ class UsuariosRouter(APIRouter):
             
             if not sucesso:
                 raise HTTPException(status.HTTP_404_NOT_FOUND, 'Usuário não encontrado!')
+
+            limpar_cache_pattern("usuarios:*")
             
             return JSONResponse({'detail': 'success'}, status_code=status.HTTP_200_OK)
 
@@ -112,12 +167,27 @@ class UsuariosRouter(APIRouter):
         id_usuario: int = Path(...), 
         uow: UnitOfWork = Depends(get_uow)
     ):
-        """Reativa um usuário previamente desativado."""
+        """
+        Reativa um usuário previamente desativado e limpa o cache.
+        
+        Parâmetros:
+        - id_usuario: O identificador (ID) do usuário repassado no path da requisição.
+        - uow: Unidade de trabalho (UnitOfWork) injetada como dependência para acesso ao banco.
+        
+        Lança:
+        - HTTPException 404 caso o usuário não seja encontrado.
+        - Exception genérica repassada ao manipulador de exceções.
+        
+        Retorna:
+        - Um JSONResponse confirmando a ativação.
+        """
         try:
             sucesso = uow.usuarios.alterar_status_usuario(id_usuario, status_ativo=1)
             
             if not sucesso:
                 raise HTTPException(status.HTTP_404_NOT_FOUND, 'Usuário não encontrado!')
+
+            limpar_cache_pattern("usuarios:*")
             
             return JSONResponse({'detail': 'success'}, status_code=status.HTTP_200_OK)
         except HTTPException: 
@@ -134,7 +204,7 @@ class UsuariosRouter(APIRouter):
         
         Parâmetros:
         - id_usuario: O identificador (ID) do usuário no path.
-        - banco: Sessão do banco de dados (injeção de dependência).
+        - uow: Unidade de trabalho (UnitOfWork) injetada como dependência para acesso ao banco.
         
         Lança:
         - HTTPException 404 caso o usuário não seja encontrado.
@@ -150,6 +220,8 @@ class UsuariosRouter(APIRouter):
                     status_code=status.HTTP_404_NOT_FOUND, 
                     detail='Usuário não encontrado'
                 )
+
+            limpar_cache_pattern("usuarios:*")
             
             return JSONResponse({'detail': 'success'}, status_code=status.HTTP_200_OK)
             

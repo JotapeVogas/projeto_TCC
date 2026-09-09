@@ -3,10 +3,9 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 import uvicorn
 
-from models.usuarios_models import UsuarioDB 
-from database.connection import engine
-from database.base import Base
-from routes.usuarios_routes import UsuariosRouter
+from app.database.connection import engine
+from app.database.base import Base
+from app.routes.usuarios_routes import UsuariosRouter
 
 load_dotenv()
 

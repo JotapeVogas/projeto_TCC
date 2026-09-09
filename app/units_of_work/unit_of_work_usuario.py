@@ -1,7 +1,7 @@
 from fastapi import Depends
 
-from database.connection import SessionLocal, get_session
-from repository.usuarios_repository import UsuarioRepository
+from app.database.connection import get_session
+from app.repository.usuarios_repository import UsuarioRepository
 from sqlalchemy.orm import Session
 
 class UnitOfWork:
