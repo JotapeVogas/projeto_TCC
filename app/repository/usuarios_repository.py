@@ -33,7 +33,7 @@ class UsuarioRepository:
             return query.all()
         except Exception as E:
             self.banco.rollback()
-            print(f"\n--- ERRO REAL QUE ACONTECEU: {E} ---\n") # Adicione esta linha
+            print(f"\n--- ERRO REAL QUE ACONTECEU: {E} ---\n")
             manipular_excecoes(E)
 
     def verificar_nome_existente(self, nome: str) -> bool:
