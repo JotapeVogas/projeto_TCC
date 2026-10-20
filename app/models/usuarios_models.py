@@ -1,6 +1,8 @@
 from sqlalchemy import BigInteger, PrimaryKeyConstraint, String, Integer, text
 from sqlalchemy.orm import Mapped, mapped_column
 
+# from database.base import Base
+
 from app.database.base import Base
 
 class UsuarioDB(Base):

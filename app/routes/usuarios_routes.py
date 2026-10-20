@@ -1,12 +1,20 @@
-﻿from typing import Optional, Literal
+﻿import json
+import time
+from typing import Optional, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, status, Query, Body, Path
+from fastapi import APIRouter, Depends, HTTPException, Response, status, Query, Body, Path
 from fastapi.responses import JSONResponse
 
-from app.redis_app.cache import buscar_cache, gerar_chave_cache, salvar_cache, limpar_cache_pattern, limpar_cache
+# from redis_app.cache import buscar_cache, buscar_cache_bruto, gerar_chave_cache, salvar_cache, limpar_cache_pattern, limpar_cache
+# from units_of_work.unit_of_work_usuario import UnitOfWork, get_uow
+# from schemas.usuarios_schemas import ListUsuarios, Setusuario, Editusuario
+# from utils.common import manipular_excecoes
+
+from app.redis_app.cache import buscar_cache, buscar_cache_bruto, gerar_chave_cache, salvar_cache, limpar_cache_pattern, limpar_cache
 from app.units_of_work.unit_of_work_usuario import UnitOfWork, get_uow
 from app.schemas.usuarios_schemas import ListUsuarios, Setusuario, Editusuario
 from app.utils.common import manipular_excecoes
+
 class UsuariosRouter(APIRouter):
     def __init__(self):
         super().__init__(prefix="/usuarios")
@@ -49,32 +57,50 @@ class UsuariosRouter(APIRouter):
     def buscar_usuarios(self,
         uow: UnitOfWork = Depends(get_uow),
         id: Optional[int] = Query(None, description='Filtrar por ID'),
-        ativo: Literal['-1', '0', '1'] = Query('-1', description='-1: todos | 0: inativos | 1: ativos')
+        ativo: Literal['-1', '0', '1'] = Query('-1', description='-1: todos | 0: inativos | 1: ativos'), 
+        quantidade: int = Query(0, description='Quantos registros buscar')
     ):
         """
-        Lista usuários do sistema com base em filtros opcionais, priorizando a busca no cache.
+        Lista usuários do sistema com base em filtros opcionais, priorizando a devolução 
+        direta do cache (Redis) para anular gargalos de serialização em grandes volumes.
+        
+        Esta rota possui telemetria embutida: o tempo exato de processamento interno 
+        (CPU e I/O) é cronometrado e devolvido no payload final. Quando o dado é 
+        recuperado do Redis, a API contorna o uso do json.loads e devolve uma string 
+        bruta via `Response` genérico, garantindo latência mínima (O(1)).
         
         Parâmetros:
         - uow: Unidade de trabalho (UnitOfWork) injetada como dependência para acesso ao banco.
         - id: Identificador (ID) opcional do usuário para filtro.
-        - ativo: Filtro de status do usuário ('-1' para todos, '0' inativos, '1' ativos).
+        - ativo: Filtro de status do usuário ('-1' para todos, '0' para inativos, '1' para ativos).
+        - quantidade: Opcional. Quantidade exata de registros a extrair (define o limite da query e a chave do cache).
         
         Lança:
         - Exception genérica repassada ao manipulador de exceções em caso de falhas inesperadas.
         
         Retorna:
-        - Um JSONResponse com os dados dos usuários empacotados com a chave de origem ("Redis" ou "Postgres").
+        - Response puro (para Redis) ou JSONResponse (para PostgreSQL) contendo:
+          1. "tempo_interno_ms": O tempo exato de processamento backend daquela requisição.
+          2. A chave de origem ("Redis" ou "Postgres") contendo a lista dos registros solicitados.
         """
         try:
-            chave_cache = gerar_chave_cache("usuarios:lista", id=id, ativo=ativo)
+            inicio_req = time.perf_counter()
+
+            chave_cache = f"payload:usuarios:{quantidade}" if quantidade > 0 else gerar_chave_cache("usuarios:lista", id=id, ativo=ativo)
             
-            cache = buscar_cache(chave_cache)
+            cache_bruto = buscar_cache_bruto(chave_cache) if quantidade > 0 else buscar_cache(chave_cache)
             
-            if cache:
-                return JSONResponse({"Redis": cache}, status_code=status.HTTP_200_OK)
-            db_usuarios = uow.usuarios.buscar_usuarios(id, ativo)
+            if cache_bruto:
+                tempo_ms = (time.perf_counter() - inicio_req) * 1000
+                
+                json_final_texto = f'{{"tempo_interno_ms": {round(tempo_ms, 2)}, "Redis": {cache_bruto}}}'
+                
+                return Response(content=json_final_texto, media_type="application/json")
             
+            db_usuarios = uow.usuarios.buscar_usuarios(id, ativo, quantidade)
+
             model_list_usuarios = ListUsuarios.model_construct()
+            
             if db_usuarios:
                 model_list_usuarios.usuarios = [
                     ListUsuarios.Usuario.model_validate(usuario, from_attributes=True) 
@@ -85,7 +111,13 @@ class UsuariosRouter(APIRouter):
             
             salvar_cache(chave_cache, dados_resposta, ttl=1800)
 
-            return JSONResponse({"Postgres": dados_resposta}, status_code=status.HTTP_200_OK)
+            tempo_ms = (time.perf_counter() - inicio_req) * 1000
+            
+            return JSONResponse({
+                "tempo_interno_ms": round(tempo_ms, 2),
+                "Postgres": dados_resposta
+            }, status_code=status.HTTP_200_OK)
+
         except Exception as E:
             manipular_excecoes(E)
 

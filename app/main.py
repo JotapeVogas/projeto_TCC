@@ -3,6 +3,10 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 import uvicorn
 
+# from database.connection import engine
+# from database.base import Base
+# from routes.usuarios_routes import UsuariosRouter
+
 from app.database.connection import engine
 from app.database.base import Base
 from app.routes.usuarios_routes import UsuariosRouter
@@ -22,4 +26,4 @@ def teste_raiz():
 app.include_router(UsuariosRouter())
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="localhost", port=8000)
+    uvicorn.run(app, host="localhost", port=8001)

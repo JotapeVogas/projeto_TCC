@@ -1,16 +1,19 @@
 from sqlalchemy.orm import Session
 
+# from models.usuarios_models import UsuarioDB
+# from utils.common import manipular_excecoes
+
 from app.models.usuarios_models import UsuarioDB
+from app.utils.common import manipular_excecoes
 
 from typing import Optional, List, Dict, Any
 
-from app.utils.common import manipular_excecoes
 
 class UsuarioRepository:
     def __init__(self, banco: Session):
         self.banco = banco
 
-    def buscar_usuarios(self, id: Optional[int], ativo: str) -> List[Any]:
+    def buscar_usuarios(self, id: Optional[int], ativo: str, quantidade: int) -> List[Any]:
         """
         Busca usuários com base nos filtros dinâmicos de ID e status ordenados por ID.
         
@@ -28,8 +31,11 @@ class UsuarioRepository:
             query = self.banco.query(UsuarioDB).filter(
                 UsuarioDB.id_usuario == id if id is not None else True,
                 UsuarioDB.ativo.in_([0, 1]) if ativo == '-1' else UsuarioDB.ativo == int(ativo),
-            ).order_by(UsuarioDB.id_usuario)
+            ).order_by(UsuarioDB.id_usuario.asc())
             
+            if quantidade > 0:
+                query = query.limit(quantidade)
+                
             return query.all()
         except Exception as E:
             self.banco.rollback()

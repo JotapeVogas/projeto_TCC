@@ -34,6 +34,25 @@ def buscar_cache(chave: str) -> Optional[Any]:
         logger.error(f"Erro no Redis ao buscar chave {chave}: {e}")
         return None
 
+def buscar_cache_bruto(chave: str) -> Optional[str]:
+    """
+    Busca os dados no cache Redis retornando a string JSON crua.
+    Essencial para o TCC: Evita o custo de CPU do json.loads() em large payloads.
+    """
+    r = get_redis_client()
+    if not r:
+        return None
+    
+    try:
+        dados = r.get(chave)
+        if dados:
+            # retorna bytes decodificamos para string pura
+            return dados.decode('utf-8') if isinstance(dados, bytes) else dados
+        return None
+    except RedisError as e:
+        logger.error(f"Erro no Redis ao buscar chave bruta {chave}: {e}")
+        return None
+
 def salvar_cache(chave: str, dados: Any, ttl: int = 1800) -> bool:
     """Salva dados no cache Redis. TTL padrão de 30 minutos (1800s)."""
     r = get_redis_client()
