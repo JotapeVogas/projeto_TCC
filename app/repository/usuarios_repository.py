@@ -133,7 +133,7 @@ class UsuarioRepository:
         except Exception as e:
             raise e
 
-    def desativar_usuario_no_banco(id_usuario: int, banco: Session) -> bool:
+    def desativar_usuario_no_banco(self, id_usuario: int) -> bool:
         """
         Executa a desativação lógica (Soft Delete) de um usuário definindo seu status como inativo.
         
@@ -147,7 +147,7 @@ class UsuarioRepository:
         - Um booleano indicando se o usuário foi encontrado e desativado com sucesso.
         """
         try:
-            result = banco.query(UsuarioDB).filter(
+            result = self.banco.query(UsuarioDB).filter(
                 UsuarioDB.id_usuario == id_usuario
             ).update({'ativo': 0})
             

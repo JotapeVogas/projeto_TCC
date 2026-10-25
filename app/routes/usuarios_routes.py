@@ -19,13 +19,19 @@ class UsuariosRouter(APIRouter):
     def __init__(self):
         super().__init__(prefix="/usuarios")
 
-        self.add_api_route('', 
-                           self.buscar_usuarios, 
+        self.add_api_route('/teste', 
+                           self.teste_TCC, 
                            methods=['GET'], 
-                           response_model=ListUsuarios, 
-                           summary='Buscar usuários'
+                           summary='Endpoint para concluir testes para o TCC'
         )
 
+        self.add_api_route('', 
+                           self.buscar_usuarios_por_id, 
+                           methods=['GET'],
+                           response_model=ListUsuarios,
+                           summary='Buscar usuários'
+        )
+        
         self.add_api_route('', 
                            self.postar_usuario, 
                            methods=['POST'], 
@@ -54,11 +60,10 @@ class UsuariosRouter(APIRouter):
                            summary='Desativar usuário'
         )
 
-    def buscar_usuarios(self,
+    def teste_TCC(self,
         uow: UnitOfWork = Depends(get_uow),
-        id: Optional[int] = Query(None, description='Filtrar por ID'),
-        ativo: Literal['-1', '0', '1'] = Query('-1', description='-1: todos | 0: inativos | 1: ativos'), 
-        quantidade: int = Query(0, description='Quantos registros buscar')
+        quantidade: int = Query(0, description='Quantos registros buscar'),
+        banco: Literal['Redis', 'Postgres'] = Query('Postgres', description='Escolha a origem dos dados')
     ):
         """
         Lista usuários do sistema com base em filtros opcionais, priorizando a devolução 
@@ -86,18 +91,71 @@ class UsuariosRouter(APIRouter):
         try:
             inicio_req = time.perf_counter()
 
-            chave_cache = f"payload:usuarios:{quantidade}" if quantidade > 0 else gerar_chave_cache("usuarios:lista", id=id, ativo=ativo)
+            chave_cache = f"payload:usuarios:{quantidade}"
             
-            cache_bruto = buscar_cache_bruto(chave_cache) if quantidade > 0 else buscar_cache(chave_cache)
-            
-            if cache_bruto:
+            if banco == 'Redis':
+                cache_bruto = buscar_cache_bruto(chave_cache) if quantidade > 0 else buscar_cache(chave_cache)
+                
+                if not cache_bruto:
+                    return JSONResponse(
+                        {"detail": "Banco está vazio. Puxe primeiro com o Postgres, depois tente novamente com o Redis."}, 
+                        status_code=status.HTTP_404_NOT_FOUND
+                    )
+                
+                if quantidade > 0:
+                    qtd_retornada = quantidade
+                else:
+                    dados_redis = json.loads(cache_bruto) if isinstance(cache_bruto, str) else cache_bruto
+                    qtd_retornada = len(dados_redis.get("usuarios", []))
+                
                 tempo_ms = (time.perf_counter() - inicio_req) * 1000
                 
-                json_final_texto = f'{{"tempo_interno_ms": {round(tempo_ms, 2)}, "Redis": {cache_bruto}}}'
-                
-                return Response(content=json_final_texto, media_type="application/json")
+                return JSONResponse({
+                    "tempo_interno_ms": round(tempo_ms, 2),
+                    "origem": "Redis",
+                    "quantidade_retornada": qtd_retornada
+                }, status_code=status.HTTP_200_OK)
             
-            db_usuarios = uow.usuarios.buscar_usuarios(id, ativo, quantidade)
+            elif banco == 'Postgres':
+                db_usuarios = uow.usuarios.buscar_usuarios(id=None, ativo='-1', quantidade=quantidade)
+
+                qtd_retornada = len(db_usuarios) if db_usuarios else 0
+
+                model_list_usuarios = ListUsuarios.model_construct()
+                if db_usuarios:
+                    model_list_usuarios.usuarios = [
+                        ListUsuarios.Usuario.model_validate(usuario, from_attributes=True) 
+                        for usuario in db_usuarios
+                    ]
+
+                limpar_cache_pattern("payload:usuarios:*")
+                limpar_cache_pattern("usuarios:lista*")
+
+                dados_resposta = model_list_usuarios.model_dump()
+                salvar_cache(chave_cache, dados_resposta, ttl=1800)
+
+                tempo_ms = (time.perf_counter() - inicio_req) * 1000
+                
+                return JSONResponse({
+                    "tempo_interno_ms": round(tempo_ms, 2),
+                    "origem": "Postgres",
+                    "quantidade_retornada": qtd_retornada
+                }, status_code=status.HTTP_200_OK)
+
+        except Exception as E:
+            manipular_excecoes(E)
+        
+
+    def buscar_usuarios_por_id(self,
+        uow: UnitOfWork = Depends(get_uow),
+        id: int = Query(..., description='Filtrar por ID')
+    ):
+        """
+        Endpoint de produção para listagem de usuários.
+        Filtra por ID e status de ativação diretamente no banco relacional.
+        """
+        try:
+            db_usuarios = uow.usuarios.buscar_usuarios(id, ativo='-1', quantidade=0)
 
             model_list_usuarios = ListUsuarios.model_construct()
             
@@ -107,16 +165,7 @@ class UsuariosRouter(APIRouter):
                     for usuario in db_usuarios
                 ]
 
-            dados_resposta = model_list_usuarios.model_dump()
-            
-            salvar_cache(chave_cache, dados_resposta, ttl=1800)
-
-            tempo_ms = (time.perf_counter() - inicio_req) * 1000
-            
-            return JSONResponse({
-                "tempo_interno_ms": round(tempo_ms, 2),
-                "Postgres": dados_resposta
-            }, status_code=status.HTTP_200_OK)
+            return model_list_usuarios
 
         except Exception as E:
             manipular_excecoes(E)
@@ -245,7 +294,7 @@ class UsuariosRouter(APIRouter):
         - Um JSONResponse confirmando a desativação.
         """
         try:
-            sucesso = uow.usuarios.desativar_usuario_no_banco(id_usuario, self.banco)
+            sucesso = uow.usuarios.desativar_usuario_no_banco(id_usuario)
             
             if not sucesso:
                 raise HTTPException(
