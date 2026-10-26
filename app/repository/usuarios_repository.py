@@ -15,17 +15,18 @@ class UsuarioRepository:
 
     def buscar_usuarios(self, id: Optional[int], ativo: str, quantidade: int) -> List[Any]:
         """
-        Busca usuários com base nos filtros dinâmicos de ID e status ordenados por ID.
+        Busca usuários no banco de dados aplicando filtros dinâmicos.
         
         Parâmetros:
         - id: Identificador opcional do usuário.
         - ativo: Filtro de status ('-1' para todos, '0' para inativos, '1' para ativos).
+        - quantidade: Limite numérico de registros a serem retornados (usado no ORM via .limit()).
         
         Lança:
-        - Exceções repassadas ao manipulador global em caso de falhas na query.
+        - Exception genérica repassada ao manipulador global após efetuar rollback.
         
         Retorna:
-        - Uma lista contendo os registros encontrados no banco.
+        - Uma lista contendo os objetos de modelo (UsuarioDB) encontrados no banco.
         """
         try:
             query = self.banco.query(UsuarioDB).filter(
@@ -44,16 +45,16 @@ class UsuarioRepository:
 
     def verificar_nome_existente(self, nome: str) -> bool:
         """
-        Verifica se já existe um usuário cadastrado com o nome informado.
+        Verifica a existência de um nome de usuário cadastrado.
         
         Parâmetros:
         - nome: String contendo o nome do usuário a ser verificado.
         
         Lança:
-        - Exception caso ocorra erro na execução da consulta.
+        - Exception genérica em caso de erro na execução da consulta.
         
         Retorna:
-        - Um booleano (True se existir, False caso contrário).
+        - Booleano (True se o nome já existir, False caso contrário).
         """
         try:
             result = self.banco.query(UsuarioDB.id_usuario).filter(
@@ -69,13 +70,13 @@ class UsuarioRepository:
         Insere um novo registro de usuário no banco de dados.
         
         Parâmetros:
-        - dados_usuario: Dicionário contendo os dados do novo usuário.
+        - dados_usuario: Dicionário contendo os atributos e valores do novo usuário.
         
         Lança:
-        - Exception em caso de falha na inserção, realizando o rollback.
+        - Exception genérica em caso de falha na inserção do ORM.
         
         Retorna:
-        - O objeto UsuarioDB recém-criado e persistido.
+        - O objeto da classe UsuarioDB recém-criado e persistido.
         """
         try:
             db_usuario = UsuarioDB(**dados_usuario)
@@ -92,14 +93,14 @@ class UsuarioRepository:
         Atualiza campos específicos de um usuário existente.
         
         Parâmetros:
-        - id_usuario: Identificador do usuário que será atualizado.
-        - dados_atualizados: Dicionário com os campos e novos valores.
+        - id_usuario: Identificador do usuário que sofrerá a alteração.
+        - dados_atualizados: Dicionário mapeando as colunas e os novos valores.
         
         Lança:
-        - Exception em caso de erro na atualização, realizando o rollback.
+        - Exception genérica em caso de falha no update do ORM.
         
         Retorna:
-        - Um booleano indicando se a atualização foi bem-sucedida (True) ou não (False).
+        - Booleano indicando se a atualização afetou algum registro (True) ou não (False).
         """
         try:
             result = self.banco.query(UsuarioDB).filter(
@@ -112,17 +113,17 @@ class UsuarioRepository:
 
     def alterar_status_usuario(self, id_usuario: int, status_ativo: int) -> bool:
         """
-        Altera o status de ativação (1 para ativo, 0 para inativo) de um usuário.
+        Altera exclusivamente a flag de ativação de um usuário.
         
         Parâmetros:
-        - id_usuario: Identificador do usuário.
-        - status_ativo: Novo valor numérico para o status (0 ou 1).
+        - id_usuario: Identificador numérico do usuário.
+        - status_ativo: Inteiro representando o novo status (0 para inativo, 1 para ativo).
         
         Lança:
-        - Exception em caso de erro, realizando o rollback.
+        - Exception genérica em caso de falha no update do ORM.
         
         Retorna:
-        - Um booleano (True se alterado com sucesso, False caso contrário).
+        - Booleano indicando se a alteração foi efetuada no banco (True) ou não (False).
         """
         try:
             result = self.banco.query(UsuarioDB).filter(
@@ -135,16 +136,16 @@ class UsuarioRepository:
 
     def desativar_usuario_no_banco(self, id_usuario: int) -> bool:
         """
-        Executa a desativação lógica (Soft Delete) de um usuário definindo seu status como inativo.
+        Executa a desativação lógica (Soft Delete) definindo o status como inativo (0).
         
         Parâmetros:
-        - id_usuario: O identificador (ID) do usuário no path.
+        - id_usuario: Identificador numérico do usuário a ser desativado.
         
         Lança:
-        - Exception em caso de erro na operação, realizando o rollback.
+        - Exception genérica em caso de erro na operação do ORM.
         
         Retorna:
-        - Um booleano indicando se o usuário foi encontrado e desativado com sucesso.
+        - Booleano indicando se o usuário foi encontrado e desativado com sucesso (True).
         """
         try:
             result = self.banco.query(UsuarioDB).filter(

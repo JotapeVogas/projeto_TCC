@@ -31,6 +31,23 @@ SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 
 def get_session() -> Generator[Session, None, None]:
+    """
+    Gera e gerencia o ciclo de vida de uma sessão do banco de dados (SQLAlchemy).
+    
+    Garante o commit automático em caso de sucesso da requisição e aplica um 
+    rollback seguro para evitar transações presas em caso de falhas, fechando 
+    a conexão de forma limpa ao final do uso.
+    
+    Parâmetros:
+    - Nenhum.
+    
+    Lança:
+    - Exception: Repassa qualquer erro ocorrido durante a transação de banco 
+      para o nível superior (rotas) após efetuar o rollback.
+    
+    Retorna:
+    - Um gerador (Generator) contendo a sessão (Session) ativa do banco de dados.
+    """
     db = SessionLocal()
     try:
         yield db

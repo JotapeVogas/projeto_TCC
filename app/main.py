@@ -21,6 +21,18 @@ app = FastAPI(
 
 @app.get("/")
 def teste_raiz():
+    """
+    Endpoint raiz para verificação de disponibilidade da aplicação (Health Check).
+    
+    Parâmetros:
+    - Nenhum.
+    
+    Lança:
+    - Nenhuma exceção tratada internamente.
+    
+    Retorna:
+    - Um dicionário padrão convertido para JSON com a mensagem de status da API.
+    """
     return {"mensagem": "A API do TCC está online e respondendo!"}
 
 app.include_router(UsuariosRouter())

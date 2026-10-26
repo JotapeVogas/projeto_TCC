@@ -5,7 +5,18 @@ import redis
 logger = logging.getLogger(__name__)
 
 def get_redis_client():
-    """Retorna cliente Redis configurado ou None se não estiver disponível"""
+    """
+    Inicializa, testa (ping) e retorna a instância de conexão com o servidor Redis.
+    
+    Parâmetros:
+    - Nenhum. Utiliza variáveis de ambiente (.env) para carregar credenciais.
+    
+    Lança:
+    - ConnectionError, AuthenticationError, ValueError, TypeError: Capturadas e logadas.
+    
+    Retorna:
+    - Objeto de cliente redis.Redis ativo, ou None caso a conexão falhe.
+    """
     try:
         r = redis.Redis(
             host=os.getenv("REDIS_HOST"),

@@ -1,8 +1,8 @@
 ﻿import json
 import time
-from typing import Optional, Literal
+from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status, Query, Body, Path
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Body, Path
 from fastapi.responses import JSONResponse
 
 # from redis_app.cache import buscar_cache, buscar_cache_bruto, gerar_chave_cache, salvar_cache, limpar_cache_pattern, limpar_cache
@@ -10,7 +10,7 @@ from fastapi.responses import JSONResponse
 # from schemas.usuarios_schemas import ListUsuarios, Setusuario, Editusuario
 # from utils.common import manipular_excecoes
 
-from app.redis_app.cache import buscar_cache, buscar_cache_bruto, gerar_chave_cache, salvar_cache, limpar_cache_pattern, limpar_cache
+from app.redis_app.cache import buscar_cache, buscar_cache_bruto, salvar_cache, limpar_cache_pattern
 from app.units_of_work.unit_of_work_usuario import UnitOfWork, get_uow
 from app.schemas.usuarios_schemas import ListUsuarios, Setusuario, Editusuario
 from app.utils.common import manipular_excecoes
@@ -66,27 +66,27 @@ class UsuariosRouter(APIRouter):
         banco: Literal['Redis', 'Postgres'] = Query('Postgres', description='Escolha a origem dos dados')
     ):
         """
-        Lista usuários do sistema com base em filtros opcionais, priorizando a devolução 
-        direta do cache (Redis) para anular gargalos de serialização em grandes volumes.
+        Endpoint exclusivo para testes de benchmark do TCC, focado na avaliação de 
+        gargalos de CPU, RAM e I/O.
         
         Esta rota possui telemetria embutida: o tempo exato de processamento interno 
-        (CPU e I/O) é cronometrado e devolvido no payload final. Quando o dado é 
-        recuperado do Redis, a API contorna o uso do json.loads e devolve uma string 
-        bruta via `Response` genérico, garantindo latência mínima (O(1)).
+        (CPU e I/O) é cronometrado e devolvido. Quando o dado é recuperado do Redis, 
+        a API contorna o uso do json.loads e devolve a string bruta. O retorno é enxuto 
+        (apenas a contagem) para anular o gargalo de rede.
         
         Parâmetros:
         - uow: Unidade de trabalho (UnitOfWork) injetada como dependência para acesso ao banco.
-        - id: Identificador (ID) opcional do usuário para filtro.
-        - ativo: Filtro de status do usuário ('-1' para todos, '0' para inativos, '1' para ativos).
-        - quantidade: Opcional. Quantidade exata de registros a extrair (define o limite da query e a chave do cache).
+        - quantidade: Quantidade exata de registros a extrair (define o limite da query e a chave do cache).
+        - banco: Define a origem dos dados ('Redis' ou 'Postgres') para forçar o fluxo de teste.
         
         Lança:
         - Exception genérica repassada ao manipulador de exceções em caso de falhas inesperadas.
         
         Retorna:
-        - Response puro (para Redis) ou JSONResponse (para PostgreSQL) contendo:
+        - JSONResponse contendo:
           1. "tempo_interno_ms": O tempo exato de processamento backend daquela requisição.
-          2. A chave de origem ("Redis" ou "Postgres") contendo a lista dos registros solicitados.
+          2. "origem": A chave de origem ("Redis" ou "Postgres").
+          3. "quantidade_retornada": Número de registros validados.
         """
         try:
             inicio_req = time.perf_counter()
@@ -151,8 +151,20 @@ class UsuariosRouter(APIRouter):
         id: int = Query(..., description='Filtrar por ID')
     ):
         """
-        Endpoint de produção para listagem de usuários.
-        Filtra por ID e status de ativação diretamente no banco relacional.
+        Endpoint de produção para listagem e busca específica de usuários.
+        
+        Realiza a consulta diretamente no banco relacional (PostgreSQL) garantindo 
+        os dados mais recentes.
+        
+        Parâmetros:
+        - uow: Unidade de trabalho (UnitOfWork) injetada como dependência para acesso ao banco.
+        - id: Identificador (ID) obrigatório do usuário para filtro.
+        
+        Lança:
+        - Exception genérica repassada ao manipulador de exceções em caso de falha na consulta.
+        
+        Retorna:
+        - Objeto ListUsuarios formatado e validado pelo Pydantic.
         """
         try:
             db_usuarios = uow.usuarios.buscar_usuarios(id, ativo='-1', quantidade=0)
@@ -175,18 +187,21 @@ class UsuariosRouter(APIRouter):
         uow: UnitOfWork = Depends(get_uow)
     ):
         """
-        Cria e cadastra um novo usuário no sistema, invalidando o cache das listagens.
+        Cria e cadastra um novo usuário no sistema.
+        
+        Realiza a inserção no banco de dados relacional e invalida os padrões 
+        de cache antigos para manter a consistência de leitura.
         
         Parâmetros:
         - usuario_info: Objeto recebido no corpo da requisição (Body) contendo os dados de criação.
         - uow: Unidade de trabalho (UnitOfWork) injetada como dependência para acesso ao banco.
         
         Lança:
-        - HTTPException 400 caso já exista um usuário cadastrado com o mesmo nome informado.
+        - HTTPException 400 caso já exista um usuário cadastrado com o mesmo nome.
         - Exception genérica repassada ao manipulador de exceções.
         
         Retorna:
-        - Um JSONResponse confirmando a criação com os dados do usuário.
+        - JSONResponse com status 201 confirmando a criação e retornando os dados do usuário.
         """
         try:
             if uow.usuarios.verificar_nome_existente(usuario_info.nome):
@@ -214,18 +229,21 @@ class UsuariosRouter(APIRouter):
         uow: UnitOfWork = Depends(get_uow)
     ):
         """
-        Atualiza campos específicos das informações de um usuário existente e limpa o cache.
+        Atualiza campos específicos das informações de um usuário existente.
+        
+        Altera os dados fornecidos no PostgreSQL e limpa as chaves de cache relacionadas 
+        à listagem de usuários.
         
         Parâmetros:
         - usuario_info: Objeto contendo os dados a serem atualizados e o ID do usuário (Body).
         - uow: Unidade de trabalho (UnitOfWork) injetada como dependência para acesso ao banco.
         
         Lança:
-        - HTTPException 404 caso o usuário não seja encontrado para atualização.
+        - HTTPException 404 caso o usuário não seja encontrado no banco.
         - Exception genérica repassada ao manipulador de exceções.
         
         Retorna:
-        - Um JSONResponse confirmando o sucesso da atualização.
+        - JSONResponse com status 200 confirmando o sucesso da atualização.
         """
         try:
             dados_atualizados = usuario_info.model_dump(exclude_unset=True, exclude={'id_usuario'})
@@ -249,10 +267,12 @@ class UsuariosRouter(APIRouter):
         uow: UnitOfWork = Depends(get_uow)
     ):
         """
-        Reativa um usuário previamente desativado e limpa o cache.
+        Reativa um usuário previamente desativado.
+        
+        Muda o status do usuário para ativo no banco de dados e limpa o cache.
         
         Parâmetros:
-        - id_usuario: O identificador (ID) do usuário repassado no path da requisição.
+        - id_usuario: O identificador (ID) do usuário repassado na URL (Path).
         - uow: Unidade de trabalho (UnitOfWork) injetada como dependência para acesso ao banco.
         
         Lança:
@@ -260,7 +280,7 @@ class UsuariosRouter(APIRouter):
         - Exception genérica repassada ao manipulador de exceções.
         
         Retorna:
-        - Um JSONResponse confirmando a ativação.
+        - JSONResponse com status 200 confirmando a ativação.
         """
         try:
             sucesso = uow.usuarios.alterar_status_usuario(id_usuario, status_ativo=1)
@@ -281,17 +301,21 @@ class UsuariosRouter(APIRouter):
         uow: UnitOfWork = Depends(get_uow)
     ):
         """
-        Realiza a desativação de um usuário (Soft Delete) definindo seu status como inativo.
+        Realiza a desativação lógica (Soft Delete) de um usuário.
+        
+        Altera o status do usuário para inativo no banco de dados sem deletar o registro 
+        fisicamente, limpando o cache em seguida.
         
         Parâmetros:
-        - id_usuario: O identificador (ID) do usuário no path.
+        - id_usuario: O identificador (ID) do usuário repassado na URL (Path).
         - uow: Unidade de trabalho (UnitOfWork) injetada como dependência para acesso ao banco.
         
         Lança:
         - HTTPException 404 caso o usuário não seja encontrado.
+        - Exception genérica repassada ao manipulador de exceções.
         
         Retorna:
-        - Um JSONResponse confirmando a desativação.
+        - JSONResponse com status 200 confirmando a desativação.
         """
         try:
             sucesso = uow.usuarios.desativar_usuario_no_banco(id_usuario)
